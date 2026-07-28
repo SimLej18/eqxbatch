@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "eqxbatch"
+version = "0.1.0"
+description = "Batched evaluation of Equinox modules: a vmap that lives in the PyTree"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "S. Lejoly", email = "simon.lejoly@unamur.be" }]
+keywords = ["jax", "equinox", "vmap", "batching", "ensemble", "pytree"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
+dependencies = ["equinox>=0.11.0", "jax>=0.4.20"]
+
+[project.urls]
+Homepage = "https://github.com/SimLej18/eqxbatch"
+Issues = "https://github.com/SimLej18/eqxbatch/issues"
