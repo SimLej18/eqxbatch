@@ -20,7 +20,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.tree_util as jtu
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["Batched", "broadcast", "stack"]
 
 _T = TypeVar("_T")
@@ -92,6 +92,10 @@ class Batched(eqx.Module):
       else shared), or a pytree prefix for per-leaf control.
     - `arg_axes`: default axis spec for call arguments. `None` (the default) shares every
       argument across the batch; `eqx.if_array(0)` batches them.
+    - `kwarg_axes`: default axis spec for call keyword arguments, same form as `arg_axes`
+      (a pytree prefix over the kwargs dict, so individual kwargs can be picked out by
+      name, e.g. `kwarg_axes={"weights": 0}`). `None` (the default) shares every keyword
+      argument across the batch.
     - `axis_size`: the batch size. Only strictly required when nothing is batched, but
       supplying it always makes the fully-shared case work by broadcasting.
     """
@@ -99,6 +103,7 @@ class Batched(eqx.Module):
     inner: Any
     in_axes: Any = eqx.field(static=True)
     arg_axes: Any = eqx.field(static=True)
+    kwarg_axes: Any = eqx.field(static=True)
     axis_size: int | None = eqx.field(static=True)
 
     def __init__(
@@ -107,16 +112,25 @@ class Batched(eqx.Module):
         *,
         in_axes: Any = eqx.if_array(0),
         arg_axes: Any = None,
+        kwarg_axes: Any = None,
         axis_size: int | None = None,
     ):
         self.inner = inner
         self.in_axes = in_axes
         self.arg_axes = arg_axes
+        self.kwarg_axes = kwarg_axes
         self.axis_size = axis_size
 
-    def map(self, fn: Callable[..., _T], *args: Any, arg_axes: Any = _UNSET) -> _T:
+    def map(
+        self,
+        fn: Callable[..., _T],
+        *args: Any,
+        arg_axes: Any = _UNSET,
+        kwarg_axes: Any = _UNSET,
+        **kwargs: Any,
+    ) -> _T:
         """
-        Run `fn(inner, *args)` once per batch element.
+        Run `fn(inner, *args, **kwargs)` once per batch element.
 
         This is the only primitive; `__call__` and the attribute forwarding are sugar over
         it. Unlike a raw `jax.vmap`, `fn` may return non-array leaves -- a Module, a Python
@@ -124,19 +138,24 @@ class Batched(eqx.Module):
 
         **Arguments:**
 
-        - `fn`: callable taking one *unbatched* module, then `*args`.
+        - `fn`: callable taking one *unbatched* module, then `*args`, `**kwargs`.
         - `arg_axes`: axis spec for `args`, overriding this module's default.
+        - `kwarg_axes`: axis spec for `kwargs`, overriding this module's default. Note that
+          the names `arg_axes` and `kwarg_axes` are reserved and cannot themselves be
+          forwarded to `fn` as keyword arguments.
         """
         if arg_axes is _UNSET:
             arg_axes = self.arg_axes
+        if kwarg_axes is _UNSET:
+            kwarg_axes = self.kwarg_axes
         return eqx.filter_vmap(
-            lambda m, a: fn(m, *a),
-            in_axes=(self.in_axes, arg_axes),
+            lambda m, a, kw: fn(m, *a, **kw),
+            in_axes=(self.in_axes, arg_axes, kwarg_axes),
             axis_size=self.axis_size,
-        )(self.inner, args)
+        )(self.inner, args, kwargs)
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        return self.map(lambda m, *a: m(*a, **kwargs), *args)
+        return self.map(lambda m, *a, **kw: m(*a, **kw), *args, **kwargs)
 
     def __getitem__(self, i: int) -> Any:
         """Recover batch element `i` as an ordinary, unbatched module."""
@@ -186,8 +205,12 @@ class Batched(eqx.Module):
         descriptor = getattr(type(module), name, None)
 
         if callable(descriptor):
-            return lambda *args, arg_axes=_UNSET, **kwargs: self.map(
-                lambda m, *a: getattr(m, name)(*a, **kwargs), *args, arg_axes=arg_axes
+            return lambda *args, arg_axes=_UNSET, kwarg_axes=_UNSET, **kwargs: self.map(
+                lambda m, *a, **kw: getattr(m, name)(*a, **kw),
+                *args,
+                arg_axes=arg_axes,
+                kwarg_axes=kwarg_axes,
+                **kwargs,
             )
 
         # A property must be evaluated *under* the vmap, never on the batched leaves: one
