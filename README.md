@@ -78,6 +78,14 @@ Arguments are shared across the batch by default; pass `arg_axes` to override:
 ensemble.some_method(ys, arg_axes=(eqx.if_array(0),))
 ```
 
+The batch axis goes first in every output by default; `out_axes` moves it, either for
+every call or for one:
+
+```python
+Batched(stack(*mlps), out_axes=-1)(x).shape   # (2, 8) -- batch axis last
+ensemble.some_method(y, out_axes=-1)
+```
+
 For anything that spans several attributes at once, drop to the primitive:
 
 ```python
@@ -101,13 +109,13 @@ eqx.filter_grad(loss)(ensemble, x)                             # gradients keep 
 
 | | |
 |---|---|
-| `Batched(inner, *, in_axes, arg_axes, axis_size)` | the batched node |
-| `Batched.map(fn, *args, arg_axes=...)` | run `fn(inner, *args)` per batch element |
+| `Batched(inner, *, in_axes, arg_axes, kwarg_axes, out_axes, axis_size)` | the batched node |
+| `Batched.map(fn, *args, arg_axes=..., kwarg_axes=..., out_axes=..., **kwargs)` | run `fn(inner, *args)` per batch element |
 | `Batched[i]`, `len(Batched)` | unstack one element, batch size |
 | `stack(*modules)` | `list[Module] -> Module` with a leading axis |
 | `broadcast(module, size)` | one module repeated `size` times |
 
-`in_axes` and `arg_axes` take `eqx.filter_vmap` specs: an int, `None`, a callable such as
+`in_axes`, `arg_axes`, `kwarg_axes` and `out_axes` take `eqx.filter_vmap` specs: an int, `None`, a callable such as
 `eqx.if_array(0)`, or a pytree prefix for per-leaf control.
 
 ## Caveats

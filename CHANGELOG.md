@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-09-29
+
+### Added
+
+- `Batched.out_axes`: where the batch axis goes in the output, as an `eqx.filter_vmap`
+  spec (e.g. `eqx.if_array(-1)` to put it last). Defaults to `eqx.if_array(0)`, the
+  previous behavior. `Batched.map` and forwarded methods accept an `out_axes` override.
+  A bare int is treated as `eqx.if_array(int)`, so non-array outputs stay unbatched.
+
+### Notes
+
+- `out_axes` joins `arg_axes` and `kwarg_axes` as a reserved keyword name on
+  `Batched.map` and forwarded methods.
+
 ## [0.2.0] - 2026-08-19
 
 ### Added

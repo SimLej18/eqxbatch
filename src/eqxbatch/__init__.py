@@ -20,7 +20,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.tree_util as jtu
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = ["Batched", "broadcast", "stack"]
 
 _T = TypeVar("_T")
@@ -96,6 +96,9 @@ class Batched(eqx.Module):
       (a pytree prefix over the kwargs dict, so individual kwargs can be picked out by
       name, e.g. `kwarg_axes={"weights": 0}`). `None` (the default) shares every keyword
       argument across the batch.
+    - `out_axes`: where the batch axis goes in the output, in `eqx.filter_vmap` form. The
+      default `eqx.if_array(0)` puts it first on every array leaf; e.g. `eqx.if_array(-1)`
+      puts it last, and a pytree prefix over the output gives per-leaf control.
     - `axis_size`: the batch size. Only strictly required when nothing is batched, but
       supplying it always makes the fully-shared case work by broadcasting.
     """
@@ -104,6 +107,7 @@ class Batched(eqx.Module):
     in_axes: Any = eqx.field(static=True)
     arg_axes: Any = eqx.field(static=True)
     kwarg_axes: Any = eqx.field(static=True)
+    out_axes: Any = eqx.field(static=True)
     axis_size: int | None = eqx.field(static=True)
 
     def __init__(
@@ -113,12 +117,14 @@ class Batched(eqx.Module):
         in_axes: Any = eqx.if_array(0),
         arg_axes: Any = None,
         kwarg_axes: Any = None,
+        out_axes: Any = eqx.if_array(0),
         axis_size: int | None = None,
     ):
         self.inner = inner
         self.in_axes = in_axes
         self.arg_axes = arg_axes
         self.kwarg_axes = kwarg_axes
+        self.out_axes = out_axes
         self.axis_size = axis_size
 
     def map(
@@ -127,6 +133,7 @@ class Batched(eqx.Module):
         *args: Any,
         arg_axes: Any = _UNSET,
         kwarg_axes: Any = _UNSET,
+        out_axes: Any = _UNSET,
         **kwargs: Any,
     ) -> _T:
         """
@@ -140,17 +147,24 @@ class Batched(eqx.Module):
 
         - `fn`: callable taking one *unbatched* module, then `*args`, `**kwargs`.
         - `arg_axes`: axis spec for `args`, overriding this module's default.
-        - `kwarg_axes`: axis spec for `kwargs`, overriding this module's default. Note that
-          the names `arg_axes` and `kwarg_axes` are reserved and cannot themselves be
-          forwarded to `fn` as keyword arguments.
+        - `kwarg_axes`: axis spec for `kwargs`, overriding this module's default.
+        - `out_axes`: axis spec for the output, overriding this module's default. Note that
+          the names `arg_axes`, `kwarg_axes` and `out_axes` are reserved and cannot
+          themselves be forwarded to `fn` as keyword arguments.
         """
         if arg_axes is _UNSET:
             arg_axes = self.arg_axes
         if kwarg_axes is _UNSET:
             kwarg_axes = self.kwarg_axes
+        if out_axes is _UNSET:
+            out_axes = self.out_axes
+        # A bare int would also apply to non-array outputs, which `filter_vmap` rejects.
+        if isinstance(out_axes, int):
+            out_axes = eqx.if_array(out_axes)
         return eqx.filter_vmap(
             lambda m, a, kw: fn(m, *a, **kw),
             in_axes=(self.in_axes, arg_axes, kwarg_axes),
+            out_axes=out_axes,
             axis_size=self.axis_size,
         )(self.inner, args, kwargs)
 
@@ -187,8 +201,8 @@ class Batched(eqx.Module):
         """
         Forward any public attribute of the wrapped module through this module's vmap.
 
-        Names defined on `Batched` itself -- `inner`, `in_axes`, `arg_axes`, `axis_size`,
-        `map` -- always win, and private names are never forwarded.
+        Names defined on `Batched` itself -- `inner`, `in_axes`, `arg_axes`, `kwarg_axes`,
+        `out_axes`, `axis_size`, `map` -- always win, and private names are never forwarded.
         """
         if name.startswith("_"):
             raise AttributeError(name)
@@ -205,13 +219,24 @@ class Batched(eqx.Module):
         descriptor = getattr(type(module), name, None)
 
         if callable(descriptor):
-            return lambda *args, arg_axes=_UNSET, kwarg_axes=_UNSET, **kwargs: self.map(
-                lambda m, *a, **kw: getattr(m, name)(*a, **kw),
-                *args,
-                arg_axes=arg_axes,
-                kwarg_axes=kwarg_axes,
-                **kwargs,
-            )
+
+            def method(
+                *args: Any,
+                arg_axes: Any = _UNSET,
+                kwarg_axes: Any = _UNSET,
+                out_axes: Any = _UNSET,
+                **kwargs: Any,
+            ) -> Any:
+                return self.map(
+                    lambda m, *a, **kw: getattr(m, name)(*a, **kw),
+                    *args,
+                    arg_axes=arg_axes,
+                    kwarg_axes=kwarg_axes,
+                    out_axes=out_axes,
+                    **kwargs,
+                )
+
+            return method
 
         # A property must be evaluated *under* the vmap, never on the batched leaves: one
         # that reduces (say `jnp.prod(self.scales)`) would otherwise fold the batch axis
